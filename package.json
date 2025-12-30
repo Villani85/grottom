@@ -1,35 +1,51 @@
 {
-  "name": "v0-membership-gamified",
-  "version": "1.0.0",
+  "name": "brain-hacking-academy",
+  "version": "0.1.0",
   "private": true,
-  "type": "module",
   "scripts": {
-    "dev": "next dev",
     "build": "next build",
+    "dev": "next dev",
     "start": "next start",
-    "lint": "next lint"
+    "firestore:deploy-indexes": "firebase deploy --only firestore:indexes"
   },
   "dependencies": {
-    "next": "14.2.20",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "firebase": "10.14.1",
-    "firebase-admin": "12.5.0",
-    "stripe": "16.12.0",
-    "resend": "4.0.0",
-    "zod": "3.23.8",
-    "date-fns": "3.6.0",
-    "nanoid": "5.0.7"
+    "@aws-sdk/client-s3": "^3.958.0",
+    "@radix-ui/react-accordion": "^1.2.12",
+    "@radix-ui/react-avatar": "^1.1.11",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-label": "2.1.8",
+    "@radix-ui/react-select": "2.2.6",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "@types/bcryptjs": "^2.4.6",
+    "amazon-ivs-web-broadcast": "^1.31.1",
+    "axios": "latest",
+    "bcryptjs": "^2.4.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "firebase": "^11.1.0",
+    "firebase-admin": "^13.6.0",
+    "lucide-react": "^0.454.0",
+    "next": "16.0.10",
+    "next-themes": "0.4.6",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-icons": "latest",
+    "recharts": "latest",
+    "resend": "^4.0.1",
+    "tailwind-merge": "^2.5.5",
+    "tailwindcss-animate": "^1.0.7",
+    "tw-animate-css": "latest",
+    "zod": "^4.2.1"
   },
   "devDependencies": {
-    "@types/node": "20.17.12",
-    "@types/react": "18.3.12",
-    "@types/react-dom": "18.3.1",
-    "eslint": "8.57.1",
-    "eslint-config-next": "14.2.20",
-    "typescript": "5.7.2"
-  },
-  "engines": {
-    "node": ">=20.9.0"
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "babel-plugin-react-compiler": "1.0.0",
+    "postcss": "^8.5",
+    "tailwindcss": "^4",
+    "typescript": "^5"
   }
 }

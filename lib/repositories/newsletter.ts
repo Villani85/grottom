@@ -1,116 +1,181 @@
-import "server-only";
+import { mockNewsletterCampaigns } from "@/lib/mock/data"
+import { isDemoMode } from "@/lib/env"
+import type { NewsletterCampaign } from "@/lib/types"
 
-import { nanoid } from "nanoid";
-import { isDemoMode } from "@/lib/env";
-import { getAdminDb } from "@/lib/firebase-admin";
-import { getDemoStore } from "@/lib/repositories/_memory";
-import type { NewsletterCampaign, NewsletterSendLog, NewsletterStatus } from "@/types";
-import { demoNewsletterDraft } from "@/lib/mock/data";
-
-const CAMP_COL = "newsletter_campaigns";
-const SEND_COL = "newsletter_sends";
-
-function nowISO() { return new Date().toISOString(); }
-
-export class NewsletterRepo {
-  static async ensureSeed(): Promise<void> {
-    if (!isDemoMode()) return;
-    const store = getDemoStore();
-    if (Object.keys(store.newsletterCampaigns).length) return;
-    store.newsletterCampaigns[demoNewsletterDraft.id] = demoNewsletterDraft;
-  }
-
-  static async listCampaigns(limit = 50): Promise<NewsletterCampaign[]> {
-    await this.ensureSeed();
-    if (isDemoMode()) {
-      const store = getDemoStore();
-      return Object.values(store.newsletterCampaigns).slice(0, limit) as NewsletterCampaign[];
-    }
-    const db = getAdminDb();
-    if (!db) return [];
-    const qs = await db.collection(CAMP_COL).orderBy("createdAt", "desc").limit(limit).get();
-    return qs.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-  }
-
-  static async getCampaign(id: string): Promise<NewsletterCampaign | null> {
-    await this.ensureSeed();
-    if (isDemoMode()) {
-      const store = getDemoStore();
-      return (store.newsletterCampaigns[id] as NewsletterCampaign) ?? null;
-    }
-    const db = getAdminDb();
-    if (!db) return null;
-    const snap = await db.collection(CAMP_COL).doc(id).get();
-    if (!snap.exists) return null;
-    return { id: snap.id, ...(snap.data() as any) } as NewsletterCampaign;
-  }
-
-  static async upsertCampaign(input: Partial<NewsletterCampaign> & { id?: string; createdBy: string }): Promise<NewsletterCampaign> {
-    await this.ensureSeed();
-    const id = input.id ?? nanoid();
-    const existing = await this.getCampaign(id);
-    const createdAt = existing?.createdAt ?? nowISO();
-
-    const campaign: NewsletterCampaign = {
-      id,
-      status: (input.status as any) ?? existing?.status ?? "draft",
-      subject: input.subject ?? existing?.subject ?? "",
-      fromName: input.fromName ?? existing?.fromName ?? "Your Brand",
-      fromEmail: input.fromEmail ?? existing?.fromEmail ?? "no-reply@example.com",
-      replyTo: input.replyTo ?? existing?.replyTo,
-      html: input.html ?? existing?.html ?? "",
-      audience: (input.audience as any) ?? existing?.audience ?? { include: ["all"], excludeBanned: true, marketing: false },
-      scheduledAt: input.scheduledAt ?? existing?.scheduledAt,
-      lastUserIdProcessed: input.lastUserIdProcessed ?? existing?.lastUserIdProcessed,
-      createdBy: input.createdBy,
-      createdAt,
-      updatedAt: nowISO(),
-    };
-
-    if (isDemoMode()) {
-      const store = getDemoStore();
-      store.newsletterCampaigns[id] = campaign;
-      return campaign;
+export class NewsletterRepository {
+  static async getAll(limit = 50): Promise<NewsletterCampaign[]> {
+    if (isDemoMode) {
+      return mockNewsletterCampaigns.slice(0, limit)
     }
 
-    const db = getAdminDb();
-    if (!db) throw new Error("Firebase Admin not configured");
-    const { id: _, ...payload } = campaign as any;
-    await db.collection(CAMP_COL).doc(id).set(payload, { merge: true });
-    return campaign;
+    // In production, fetch from Firestore using Admin SDK
+    try {
+      const { getAdminApp } = await import("@/lib/firebase-admin")
+      const app = await getAdminApp()
+      
+      if (!app) {
+        console.warn("[NewsletterRepository] Firebase Admin not initialized, returning empty array")
+        return []
+      }
+
+      const { getFirestore } = await import("firebase-admin/firestore")
+      const db = getFirestore(app)
+      
+      const campaignsSnapshot = await db
+        .collection("newsletter_campaigns")
+        .orderBy("createdAt", "desc")
+        .limit(limit)
+        .get()
+
+      return campaignsSnapshot.docs.map((doc) => {
+        const data = doc.data()
+        return {
+          id: doc.id,
+          subject: data.subject || "",
+          fromName: data.fromName || "",
+          fromEmail: data.fromEmail || "",
+          replyTo: data.replyTo || "",
+          html: data.html || "",
+          status: data.status || "draft",
+          audience: data.audience || { include: [], excludeBanned: true },
+          scheduledAt: data.scheduledAt?.toDate?.() || (data.scheduledAt ? new Date(data.scheduledAt) : undefined),
+          lastUserIdProcessed: data.lastUserIdProcessed || undefined,
+          createdBy: data.createdBy || "",
+          createdAt: data.createdAt?.toDate?.() || new Date(data.createdAt) || new Date(),
+          updatedAt: data.updatedAt?.toDate?.() || new Date(data.updatedAt) || new Date(),
+        } as NewsletterCampaign
+      })
+    } catch (error) {
+      console.error("[NewsletterRepository] Error fetching campaigns from Firestore:", error)
+      return []
+    }
   }
 
-  static async setStatus(id: string, status: NewsletterStatus): Promise<void> {
-    const camp = await this.getCampaign(id);
-    if (!camp) return;
-    await this.upsertCampaign({ id, status, createdBy: camp.createdBy });
-  }
-
-  static async createSendLog(log: Omit<NewsletterSendLog, "id" | "createdAt" | "updatedAt">): Promise<NewsletterSendLog> {
-    const id = nanoid();
-    const record: NewsletterSendLog = { id, ...log, createdAt: nowISO(), updatedAt: nowISO() };
-
-    if (isDemoMode()) {
-      const store = getDemoStore();
-      store.newsletterSends[id] = record;
-      return record;
+  static async getById(id: string): Promise<NewsletterCampaign | null> {
+    if (isDemoMode) {
+      return mockNewsletterCampaigns.find((c) => c.id === id) || null
     }
 
-    const db = getAdminDb();
-    if (!db) throw new Error("Firebase Admin not configured");
-    const { id: _, ...payload } = record as any;
-    await db.collection(SEND_COL).doc(id).set(payload);
-    return record;
+    // In production, fetch from Firestore using Admin SDK
+    try {
+      const { getAdminApp } = await import("@/lib/firebase-admin")
+      const app = await getAdminApp()
+      
+      if (!app) {
+        console.warn("[NewsletterRepository] Firebase Admin not initialized")
+        return null
+      }
+
+      const { getFirestore } = await import("firebase-admin/firestore")
+      const db = getFirestore(app)
+      
+      const campaignDoc = await db.collection("newsletter_campaigns").doc(id).get()
+
+      if (!campaignDoc.exists) {
+        console.warn(`[NewsletterRepository] Campaign ${id} not found in Firestore`)
+        return null
+      }
+
+      const data = campaignDoc.data()
+      return {
+        id: campaignDoc.id,
+        subject: data?.subject || "",
+        fromName: data?.fromName || "",
+        fromEmail: data?.fromEmail || "",
+        replyTo: data?.replyTo || "",
+        html: data?.html || "",
+        status: data?.status || "draft",
+        audience: data?.audience || { include: [], excludeBanned: true },
+        scheduledAt: data?.scheduledAt?.toDate?.() || (data?.scheduledAt ? new Date(data.scheduledAt) : undefined),
+        lastUserIdProcessed: data?.lastUserIdProcessed || undefined,
+        createdBy: data?.createdBy || "",
+        createdAt: data?.createdAt?.toDate?.() || new Date(data?.createdAt) || new Date(),
+        updatedAt: data?.updatedAt?.toDate?.() || new Date(data?.updatedAt) || new Date(),
+      } as NewsletterCampaign
+    } catch (error) {
+      console.error("[NewsletterRepository] Error fetching campaign from Firestore:", error)
+      return null
+    }
   }
 
-  static async hasAlreadySent(campaignId: string, toEmail: string): Promise<boolean> {
-    if (isDemoMode()) {
-      const store = getDemoStore();
-      return Object.values(store.newsletterSends).some((s: any) => s.campaignId === campaignId && s.toEmail === toEmail && s.status === "sent");
+  static async create(campaign: Omit<NewsletterCampaign, "id" | "createdAt" | "updatedAt">): Promise<string | null> {
+    if (isDemoMode) {
+      console.log("[NewsletterRepository] Demo mode - create logged:", campaign)
+      return "demo-campaign-" + Date.now()
     }
-    const db = getAdminDb();
-    if (!db) return false;
-    const qs = await db.collection(SEND_COL).where("campaignId", "==", campaignId).where("toEmail", "==", toEmail).where("status", "==", "sent").limit(1).get();
-    return !qs.empty;
+
+    // In production, save to Firestore using Admin SDK
+    try {
+      const { getAdminApp } = await import("@/lib/firebase-admin")
+      const app = await getAdminApp()
+      
+      if (!app) {
+        console.warn("[NewsletterRepository] Firebase Admin not initialized, cannot create campaign")
+        return null
+      }
+
+      const { getFirestore } = await import("firebase-admin/firestore")
+      const db = getFirestore(app)
+      
+      const campaignData = {
+        subject: campaign.subject,
+        fromName: campaign.fromName,
+        fromEmail: campaign.fromEmail,
+        replyTo: campaign.replyTo,
+        html: campaign.html,
+        status: campaign.status,
+        audience: campaign.audience,
+        scheduledAt: campaign.scheduledAt || null,
+        lastUserIdProcessed: campaign.lastUserIdProcessed || null,
+        createdBy: campaign.createdBy,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }
+
+      const campaignRef = await db.collection("newsletter_campaigns").add(campaignData)
+
+      console.log("[NewsletterRepository] ✅ Campaign created in Firestore:", campaignRef.id, {
+        subject: campaign.subject,
+        status: campaign.status,
+      })
+      return campaignRef.id
+    } catch (error) {
+      console.error("[NewsletterRepository] ❌ Error creating campaign in Firestore:", error)
+      return null
+    }
+  }
+
+  static async update(id: string, data: Partial<NewsletterCampaign>): Promise<boolean> {
+    if (isDemoMode) {
+      console.log("[NewsletterRepository] Demo mode - update logged:", { id, data })
+      return true
+    }
+
+    // In production, update in Firestore using Admin SDK
+    try {
+      const { getAdminApp } = await import("@/lib/firebase-admin")
+      const app = await getAdminApp()
+      
+      if (!app) {
+        console.warn("[NewsletterRepository] Firebase Admin not initialized, cannot update campaign")
+        return false
+      }
+
+      const { getFirestore } = await import("firebase-admin/firestore")
+      const db = getFirestore(app)
+      
+      const campaignRef = db.collection("newsletter_campaigns").doc(id)
+      
+      await campaignRef.update({
+        ...data,
+        updatedAt: new Date(),
+      })
+
+      console.log("[NewsletterRepository] ✅ Campaign updated in Firestore:", id)
+      return true
+    } catch (error) {
+      console.error("[NewsletterRepository] ❌ Error updating campaign in Firestore:", error)
+      return false
+    }
   }
 }

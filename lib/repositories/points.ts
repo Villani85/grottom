@@ -1,34 +1,37 @@
-import "server-only";
+import { mockPointsTransactions } from "@/lib/mock/data"
+import type { PointsTransaction } from "@/lib/types"
 
-import { isDemoMode } from "@/lib/env";
-import { getAdminDb } from "@/lib/firebase-admin";
-import { getDemoStore } from "@/lib/repositories/_memory";
-import type { PointsTransaction } from "@/types";
-import { UsersRepo } from "@/lib/repositories/users";
+export class PointsRepository {
+  static async getByUserId(userId: string): Promise<PointsTransaction[]> {
+    return mockPointsTransactions.filter((tx) => tx.userId === userId)
+  }
 
-const COL = "points_transactions";
-
-export class PointsRepo {
-  static async add(tx: PointsTransaction): Promise<{ ok: true } | { ok: false; reason: "DUPLICATE" }> {
-    if (isDemoMode()) {
-      const store = getDemoStore();
-      if (store.pointsTx[tx.txId]) return { ok: false, reason: "DUPLICATE" };
-      store.pointsTx[tx.txId] = tx;
-      const user = await UsersRepo.getById(tx.uid);
-      if (user) await UsersRepo.upsert({ ...user, pointsTotal: user.pointsTotal + tx.delta });
-      return { ok: true };
+  static async create(transaction: Omit<PointsTransaction, "id" | "createdAt">): Promise<PointsTransaction> {
+    const newTransaction: PointsTransaction = {
+      ...transaction,
+      id: `tx-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      createdAt: new Date(),
     }
+    console.log("[PointsRepository] Mock mode - transaction created:", newTransaction)
+    return newTransaction
+  }
 
-    const db = getAdminDb();
-    if (!db) throw new Error("Firebase Admin not configured");
+  static async getTotalByUserId(userId: string): Promise<number> {
+    const transactions = await this.getByUserId(userId)
+    return transactions.reduce((sum, tx) => sum + tx.amount, 0)
+  }
 
-    const ref = db.collection(COL).doc(tx.txId);
-    const snap = await ref.get();
-    if (snap.exists) return { ok: false, reason: "DUPLICATE" };
-    await ref.set(tx);
-
-    const user = await UsersRepo.getById(tx.uid);
-    if (user) await UsersRepo.upsert({ ...user, pointsTotal: user.pointsTotal + tx.delta });
-    return { ok: true };
+  static async checkIdempotency(
+    userId: string,
+    type: PointsTransaction["type"],
+    referenceId?: string
+  ): Promise<boolean> {
+    // In mock mode, we allow duplicates for simplicity
+    // In production, this would check Firestore for existing transactions
+    return false
   }
 }
+
+
+
+

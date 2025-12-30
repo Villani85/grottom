@@ -1,67 +1,50 @@
-import { z } from "zod";
+// Environment configuration with demo mode detection
+// Demo mode is active ONLY if explicitly set OR if Firebase Client config is missing
+// Firebase Admin config is NOT required for client-side authentication
+export const isDemoMode =
+  process.env.NEXT_PUBLIC_DEMO_MODE === "true" ||
+  !process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
+  !process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
+  !process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
 
-const PublicEnvSchema = z.object({
-  NEXT_PUBLIC_DEMO_MODE: z.string().optional(),
-  NEXT_PUBLIC_FIREBASE_API_KEY: z.string().optional(),
-  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: z.string().optional(),
-  NEXT_PUBLIC_FIREBASE_PROJECT_ID: z.string().optional(),
-  NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: z.string().optional(),
-});
-
-const ServerEnvSchema = z.object({
-  FIREBASE_ADMIN_PROJECT_ID: z.string().optional(),
-  FIREBASE_ADMIN_CLIENT_EMAIL: z.string().optional(),
-  FIREBASE_ADMIN_PRIVATE_KEY: z.string().optional(),
-  STRIPE_SECRET_KEY: z.string().optional(),
-  STRIPE_WEBHOOK_SECRET: z.string().optional(),
-  STRIPE_PRICE_MONTHLY: z.string().optional(),
-  STRIPE_PRICE_YEARLY: z.string().optional(),
-  RESEND_API_KEY: z.string().optional(),
-  CRON_SECRET: z.string().optional(),
-  APP_BASE_URL: z.string().optional(),
-});
-
-export function getPublicEnv() {
-  return PublicEnvSchema.parse({
-    NEXT_PUBLIC_DEMO_MODE: process.env.NEXT_PUBLIC_DEMO_MODE,
-    NEXT_PUBLIC_FIREBASE_API_KEY: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-    NEXT_PUBLIC_FIREBASE_PROJECT_ID: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-    NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  });
+export const firebaseConfig = {
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "",
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "",
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "",
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "",
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "",
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "",
 }
 
-export function getServerEnv() {
-  return ServerEnvSchema.parse({
-    FIREBASE_ADMIN_PROJECT_ID: process.env.FIREBASE_ADMIN_PROJECT_ID,
-    FIREBASE_ADMIN_CLIENT_EMAIL: process.env.FIREBASE_ADMIN_CLIENT_EMAIL,
-    FIREBASE_ADMIN_PRIVATE_KEY: process.env.FIREBASE_ADMIN_PRIVATE_KEY,
-    STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
-    STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
-    STRIPE_PRICE_MONTHLY: process.env.STRIPE_PRICE_MONTHLY,
-    STRIPE_PRICE_YEARLY: process.env.STRIPE_PRICE_YEARLY,
-    RESEND_API_KEY: process.env.RESEND_API_KEY,
-    CRON_SECRET: process.env.CRON_SECRET,
-    APP_BASE_URL: process.env.APP_BASE_URL,
-  });
+export const firebaseAdminConfig = {
+  projectId: process.env.FIREBASE_ADMIN_PROJECT_ID || "",
+  clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL || "",
+  privateKey: process.env.FIREBASE_ADMIN_PRIVATE_KEY?.replace(/\\n/g, "\n") || "",
 }
 
-export function hasFirebaseAdminEnv(): boolean {
-  const s = getServerEnv();
-  return Boolean(s.FIREBASE_ADMIN_PROJECT_ID && s.FIREBASE_ADMIN_CLIENT_EMAIL && s.FIREBASE_ADMIN_PRIVATE_KEY);
+export const resendConfig = {
+  apiKey: process.env.RESEND_API_KEY || "",
+  fromEmail: process.env.EMAIL_FROM || "onboarding@resend.dev",
 }
 
-export function isDemoMode(): boolean {
-  const p = getPublicEnv();
-  if (p.NEXT_PUBLIC_DEMO_MODE?.toLowerCase() === "true") return true;
-  return !hasFirebaseAdminEnv();
+export const cronConfig = {
+  secret: process.env.CRON_SECRET || "",
 }
 
-export function requireCronSecret(headers: Headers): { ok: true } | { ok: false; error: string } {
-  const { CRON_SECRET } = getServerEnv();
-  if (!CRON_SECRET) return { ok: false, error: "CRON_SECRET missing (server env)" };
-  const got = headers.get("x-cron-secret");
-  if (!got) return { ok: false, error: "Missing x-cron-secret header" };
-  if (got !== CRON_SECRET) return { ok: false, error: "Invalid cron secret" };
-  return { ok: true };
-}
+// Strict validation - config must have real values, not empty strings
+export const hasFirebaseClientConfig =
+  !!firebaseConfig.apiKey &&
+  !!firebaseConfig.authDomain &&
+  !!firebaseConfig.projectId &&
+  firebaseConfig.apiKey.length > 10 &&
+  firebaseConfig.authDomain.length > 5 &&
+  firebaseConfig.projectId.length > 3
+
+export const hasFirebaseAdminConfig = !!(
+  firebaseAdminConfig.projectId &&
+  firebaseAdminConfig.clientEmail &&
+  firebaseAdminConfig.privateKey &&
+  firebaseAdminConfig.projectId.length > 3
+)
+
+export const hasResendConfig = !!resendConfig.apiKey && resendConfig.apiKey.length > 10

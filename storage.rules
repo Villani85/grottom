@@ -1,0 +1,43 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper function per vedere se sei admin
+    function isAdmin() {
+       return request.auth != null && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    // Cartella avatar: pubblica in lettura, scrittura solo utente proprietario
+    match /users/{userId}/avatar.jpg {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Assets pubblici (es. immagini per newsletter): tutti leggono
+    match /public-assets/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin(); // Solo admin carica
+    }
+
+    // Video e Chat: BLOCCATO ai client diretti.
+    // L'upload e il download avverranno tramite Signed URL generati dal server.
+    match /videos/{allPaths=**} {
+      allow read, write: if false; 
+    }
+    match /chat-media/{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Video dei corsi: 
+    // - Lettura: utenti autenticati (il controllo subscription avviene nell'endpoint API /api/video-url)
+    // - Scrittura: SOLO admin (per upload diretto tramite Storage Web SDK)
+    // Struttura: /courses/{courseId}/lessons/{lessonId}/video.mp4
+    // Nota: Le signed URL generate dall'endpoint /api/video-url bypassano queste regole
+    match /courses/{allPaths=**} {
+      allow read: if request.auth != null; // Utenti autenticati possono leggere (signed URL)
+      allow write: if isAdmin(); // Solo admin può scrivere (upload diretto)
+    }
+  }
+}
+
+

@@ -1,28 +1,82 @@
-import { NextResponse } from "next/server";
-import { nanoid } from "nanoid";
-import { requireAuth } from "@/lib/server-auth";
-import { CommentsRepo } from "@/lib/repositories/comments";
+import { type NextRequest, NextResponse } from "next/server"
+import { isDemoMode } from "@/lib/env"
+import type { PostComment } from "@/lib/types"
+import { mockPosts } from "@/lib/mock/data"
 
-export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const lessonId = url.searchParams.get("lessonId") ?? "demo-lesson";
-  const comments = await CommentsRepo.listByLesson(lessonId);
-  return NextResponse.json({ comments });
+// Mock comments storage (in production, use Firestore)
+const mockPostComments: PostComment[] = []
+
+// POST /api/comments - Crea commento su post community
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const { postId, content, userId, userNickname, userAvatar } = body
+
+    if (!postId || !content || !userId || !userNickname) {
+      return NextResponse.json(
+        { success: false, error: "Missing required fields: postId, content, userId, userNickname" },
+        { status: 400 }
+      )
+    }
+
+    // Verify post exists
+    const post = mockPosts.find((p) => p.id === postId)
+    if (!post) {
+      return NextResponse.json({ success: false, error: "Post not found" }, { status: 404 })
+    }
+
+    // Check if user has active subscription (for subscribers_only posts)
+    // In demo mode, allow all
+    if (!isDemoMode) {
+      // TODO: Check subscription status
+    }
+
+    const newComment: PostComment = {
+      id: `comment-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      postId,
+      userId,
+      userNickname,
+      userAvatar,
+      content: content.trim(),
+      createdAt: new Date(),
+    }
+
+    mockPostComments.push(newComment)
+
+    // Update post comments count (in production, use Firestore transaction)
+    post.commentsCount += 1
+
+    return NextResponse.json({ success: true, data: newComment }, { status: 201 })
+  } catch (error) {
+    console.error("[API] Error creating comment:", error)
+    return NextResponse.json({ success: false, error: "Failed to create comment" }, { status: 500 })
+  }
 }
 
-export async function POST(req: Request) {
-  const ctx = await requireAuth(req);
-  if (ctx instanceof Response) return ctx;
+// GET /api/comments?postId=xxx - Get comments for a post
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const postId = searchParams.get("postId")
 
-  const isSub = ctx.user?.subscriptionStatus === "active";
-  if (!isSub) return NextResponse.json({ error: "SUBSCRIPTION_REQUIRED" }, { status: 403 });
+    if (!postId) {
+      return NextResponse.json({ success: false, error: "postId is required" }, { status: 400 })
+    }
 
-  const body = await req.json().catch(() => ({}));
-  const lessonId = String(body.lessonId ?? "demo-lesson");
-  const text = String(body.body ?? "").trim();
-  if (!text) return NextResponse.json({ error: "EMPTY" }, { status: 400 });
+    const comments = mockPostComments.filter((c) => c.postId === postId).sort((a, b) => {
+      return a.createdAt.getTime() - b.createdAt.getTime()
+    })
 
-  const comment = { id: nanoid(), uid: ctx.uid, lessonId, body: text, createdAt: new Date().toISOString() };
-  await CommentsRepo.add(comment);
-  return NextResponse.json({ ok: true, comment });
+    return NextResponse.json({
+      success: true,
+      data: comments,
+    })
+  } catch (error) {
+    console.error("[API] Error fetching comments:", error)
+    return NextResponse.json({ success: false, error: "Failed to fetch comments" }, { status: 500 })
+  }
 }
+
+
+
+

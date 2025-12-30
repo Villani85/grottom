@@ -1,0 +1,222 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+    
+    // Helper function to check if user owns the resource
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own profile
+      allow read: if isOwner(userId);
+      
+      // Users can update their own profile (except isAdmin field)
+      allow update: if isOwner(userId) && 
+                     (!('isAdmin' in request.resource.data) || 
+                      request.resource.data.isAdmin == resource.data.isAdmin);
+      
+      // Users can create their own profile during registration
+      // Allow creation even if document doesn't exist yet
+      allow create: if isAuthenticated() && 
+                     request.auth.uid == userId &&
+                     (!('isAdmin' in request.resource.data) || 
+                      request.resource.data.isAdmin == false);
+      
+      // Admins can read and update any user
+      allow read, update: if isAdmin();
+      
+      // NOTE: List queries (getAll) are NOT allowed from client
+      // Use /api/users route (server-side with Admin SDK) instead
+    }
+    
+    // Users public collection (for chat/messages - only public data)
+    match /users_public/{userId} {
+      // Any authenticated user can read public profiles (for chat)
+      allow read: if isAuthenticated();
+      
+      // Users can update their own public profile
+      allow update: if isOwner(userId);
+      
+      // Users can create their own public profile
+      allow create: if isAuthenticated() && 
+                     request.auth.uid == userId;
+    }
+    
+    // Posts collection (Bacheca)
+    match /posts/{postId} {
+      // Anyone authenticated can read posts
+      allow read: if isAuthenticated();
+      
+      // Users can create posts (only their own) - authorId must match auth.uid
+      allow create: if isAuthenticated() && 
+                     request.resource.data.authorId == request.auth.uid;
+      
+      // Only admins can update posts (for moderation)
+      allow update: if isAdmin();
+      
+      // Only admins can delete posts (for moderation)
+      allow delete: if isAdmin();
+      
+      // Likes subcollection
+      match /likes/{likerUid} {
+        allow read: if isAuthenticated();
+        // Users can create their own like (likerUid must match auth.uid)
+        allow create: if isAuthenticated() && 
+                       likerUid == request.auth.uid &&
+                       request.resource.data.createdAt != null;
+        // Users can delete their own like
+        allow delete: if isAuthenticated() && 
+                       likerUid == request.auth.uid;
+      }
+      
+      // Comments subcollection
+      match /comments/{commentId} {
+        allow read: if isAuthenticated();
+        // Users can create comments (authorId must match auth.uid)
+        allow create: if isAuthenticated() && 
+                       request.resource.data.authorId == request.auth.uid &&
+                       request.resource.data.text.size() <= 500;
+        // Only comment author or admin can delete
+        allow delete: if isAuthenticated() && 
+                       (resource.data.authorId == request.auth.uid || isAdmin());
+        // No updates allowed (comments are immutable)
+        allow update: if false;
+      }
+    }
+    
+    // Comments collection (if exists)
+    match /comments/{commentId} {
+      // Anyone authenticated can read comments
+      allow read: if isAuthenticated();
+      
+      // Users can create comments
+      allow create: if isAuthenticated() && 
+                     request.resource.data.userId == request.auth.uid;
+      
+      // Users can update their own comments
+      allow update: if isAuthenticated() && 
+                     isOwner(resource.data.userId);
+      
+      // Users can delete their own comments, admins can delete any comment
+      allow delete: if isAuthenticated() && 
+                     (isOwner(resource.data.userId) || isAdmin());
+    }
+    
+    // Points transactions collection
+    match /points_transactions/{transactionId} {
+      // Users can read their own transactions
+      allow read: if isAuthenticated() && 
+                   resource.data.userId == request.auth.uid;
+      
+      // Only server (via Admin SDK) can create transactions
+      // For now, allow authenticated users to create (will be restricted later)
+      allow create: if isAuthenticated() && 
+                     request.resource.data.userId == request.auth.uid;
+      
+      // Admins can read all transactions
+      allow read: if isAdmin();
+    }
+    
+    // Admin settings collection
+    match /admin_settings/{document=**} {
+      // Anyone authenticated can read public settings
+      allow read: if isAuthenticated();
+      
+      // Only admins can write
+      allow write: if isAdmin();
+    }
+    
+    // Newsletter campaigns collection
+    match /newsletter_campaigns/{campaignId} {
+      // Only admins can read and write
+      allow read, write: if isAdmin();
+    }
+    
+    // Newsletter sends collection
+    match /newsletter_sends/{sendId} {
+      // Only admins can read
+      allow read: if isAdmin();
+      
+      // Only server (via Admin SDK) can create
+      // For now, allow admins to create
+      allow create: if isAdmin();
+    }
+    
+    // Courses collection
+    match /courses/{courseId} {
+      // Anyone authenticated can read courses
+      allow read: if isAuthenticated();
+      
+      // Only admins can write
+      allow write: if isAdmin();
+      
+      // Lessons subcollection
+      match /lessons/{lessonId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
+      
+      // Comments subcollection
+      match /comments/{commentId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && 
+                       request.resource.data.userId == request.auth.uid;
+        allow update, delete: if isAuthenticated() && 
+                                (isOwner(resource.data.userId) || isAdmin());
+      }
+    }
+    
+    // Messages collection (private chat)
+    match /messages/{messageId} {
+      // Users can read messages where they are sender or recipient
+      allow read: if isAuthenticated() && 
+                   (resource.data.fromUserId == request.auth.uid || 
+                    resource.data.toUserId == request.auth.uid);
+      
+      // Users can create messages where they are sender
+      allow create: if isAuthenticated() && 
+                      request.resource.data.fromUserId == request.auth.uid;
+      
+      // Users can update their own messages (e.g., mark as read)
+      allow update: if isAuthenticated() && 
+                     isOwner(resource.data.fromUserId);
+      
+      // Admins can read all messages
+      allow read: if isAdmin();
+    }
+    
+    // Conversations collection
+    match /conversations/{conversationId} {
+      // Users can read conversations where they are a participant
+      allow read: if isAuthenticated() && 
+                   request.auth.uid in resource.data.participantIds;
+      
+      // Users can create conversations where they are a participant
+      allow create: if isAuthenticated() && 
+                      request.auth.uid in request.resource.data.participantIds;
+      
+      // Users can update conversations where they are a participant
+      allow update: if isAuthenticated() && 
+                      request.auth.uid in resource.data.participantIds;
+      
+      // Admins can read all conversations
+      allow read: if isAdmin();
+    }
+  }
+}
+

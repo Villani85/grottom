@@ -1,0 +1,45 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user owns the resource
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Posts collection - ULTRA SIMPLIFIED for development
+    // This allows ALL operations for authenticated users
+    match /posts/{postId} {
+      // Allow ALL read operations (get and list) for authenticated users
+      allow read: if isAuthenticated();
+      
+      // Allow ALL write operations for authenticated users
+      allow write: if isAuthenticated();
+    }
+    
+    // Users collection - Allow users to read/update their own profile
+    match /users/{userId} {
+      // Allow all authenticated users to read all users (for member list)
+      // This must come FIRST to allow list operations
+      allow read: if isAuthenticated();
+      
+      // Users can create their own profile
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      
+      // Users can update their own profile
+      allow update: if isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Allow all other collections for authenticated users (temporary for development)
+    match /{document=**} {
+      allow read, write: if isAuthenticated();
+    }
+  }
+}
+

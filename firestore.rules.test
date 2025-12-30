@@ -1,0 +1,29 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ULTRA SIMPLIFIED RULES FOR TESTING
+    // These rules allow ALL operations for authenticated users
+    // USE ONLY FOR DEVELOPMENT/TESTING
+    
+    // Posts collection - Allow everything for authenticated users
+    match /posts/{postId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Users collection - Allow everything for authenticated users
+    match /users/{userId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // All other collections - Allow everything for authenticated users
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
+
+
+
+

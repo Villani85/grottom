@@ -1,61 +1,50 @@
-import { NextResponse } from "next/server";
-import { requireCronSecret } from "@/lib/env";
-import { NewsletterRepo } from "@/lib/repositories/newsletter";
-import { UsersRepo } from "@/lib/repositories/users";
-import { sendEmail } from "@/lib/email";
+import { type NextRequest, NextResponse } from "next/server"
+import { NewsletterRepository } from "@/lib/repositories/newsletter"
+import { cronConfig, resendConfig, hasResendConfig, isDemoMode } from "@/lib/env"
+import { Resend } from "resend"
+import { sendNewsletterCampaign } from "@/lib/newsletter-sender"
 
-export async function POST(req: Request) {
-  const ok = requireCronSecret(req.headers);
-  if (!ok.ok) return NextResponse.json({ error: ok.error }, { status: 401 });
+const resend = hasResendConfig ? new Resend(resendConfig.apiKey) : null
 
-  const campaigns = await NewsletterRepo.listCampaigns(50);
-  const due = campaigns.filter(c => c.status === "scheduled" && c.scheduledAt && new Date(c.scheduledAt).getTime() <= Date.now());
-
-  let processed = 0;
-  let sent = 0;
-  let failed = 0;
-
-  for (const camp of due) {
-    await NewsletterRepo.setStatus(camp.id, "sending");
-
-    const batch = await UsersRepo.listForNewsletterBatch(camp.lastUserIdProcessed ?? null, 50);
-    const aud = UsersRepo.withAudience(batch, camp.audience.include as any);
-    const aud2 = camp.audience.excludeBanned ? aud.filter(u => !u.banned) : aud;
-    const finalUsers = UsersRepo.withMarketingFilter(aud2, camp.audience.marketing);
-
-    for (const u of finalUsers) {
-      processed += 1;
-
-      const already = await NewsletterRepo.hasAlreadySent(camp.id, u.email);
-      if (already) continue;
-
-      await NewsletterRepo.createSendLog({
-        campaignId: camp.id,
-        toUserId: u.uid,
-        toEmail: u.email,
-        status: "pending",
-      });
-
-      const from = `${camp.fromName} <${camp.fromEmail}>`;
-      const res = await sendEmail({ from, to: u.email, subject: camp.subject, html: camp.html, replyTo: camp.replyTo });
-
-      if (res.ok) sent += 1;
-      else failed += 1;
-    }
-
-    const last = batch.length ? batch[batch.length - 1].uid : camp.lastUserIdProcessed;
-
-    await NewsletterRepo.upsertCampaign({
-      id: camp.id,
-      createdBy: camp.createdBy,
-      lastUserIdProcessed: last ?? undefined,
-      status: batch.length < 50 ? "sent" : "sending",
-    });
-
-    if (batch.length < 50) {
-      await NewsletterRepo.setStatus(camp.id, "sent");
-    }
+// This endpoint should be called by Vercel Cron every 5-10 minutes
+export async function GET(request: NextRequest) {
+  // Verify cron secret
+  const authHeader = request.headers.get("authorization")
+  if (authHeader !== `Bearer ${cronConfig.secret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  return NextResponse.json({ ok: true, due: due.map(d => d.id), processed, sent, failed, time: new Date().toISOString() });
+  if (isDemoMode || !hasResendConfig || !resend) {
+    return NextResponse.json({ error: "Newsletter sending not configured" }, { status: 503 })
+  }
+
+  try {
+    // Get all scheduled campaigns
+    const campaigns = await NewsletterRepository.getAll()
+    const scheduledCampaigns = campaigns.filter((c) => c.status === "scheduled")
+
+    for (const campaign of scheduledCampaigns) {
+      // Check if it's time to send
+      if (campaign.scheduledAt && campaign.scheduledAt > new Date()) {
+        continue // Not yet time
+      }
+
+      console.log(`[Newsletter Cron] Processing campaign ${campaign.id}`)
+
+      // Update status to sending
+      await NewsletterRepository.update(campaign.id, { status: "sending" })
+
+      // Send campaign using shared function
+      if (!resend) {
+        throw new Error("Resend not configured")
+      }
+
+      await sendNewsletterCampaign(campaign, resend)
+    }
+
+    return NextResponse.json({ processed: scheduledCampaigns.length })
+  } catch (error: any) {
+    console.error("[Newsletter Cron] Error:", error)
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
 }
